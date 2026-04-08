@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura Timer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;400&family=JetBrains+Mono:wght@200;400&family=Playfair+Display:wght@300;400&family=Orbitron:wght@300;400&family=Space+Grotesk:wght@300;400&family=Bebas+Neue&family=Raleway:wght@200;400&family=Caveat:wght@400;700&family=Quicksand:wght@300;400&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Výchozí barvy (Motiv: Aura Glow) */
+            --color-1: #ff2d78;
+            --color-2: #ff6b9d;
+            --color-3: #7b2ff7;
+            --color-bg: #1a0830;
+            --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: var(--font-main);
+            color: white;
+            background: var(--color-bg);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* Aura Background */
+        .aura-bg {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0;
+            background:
+                radial-gradient(ellipse 35% 30% at 50% 50%, var(--color-1) 0%, transparent 100%),
+                radial-gradient(ellipse 55% 45% at 50% 50%, var(--color-2) 0%, transparent 100%),
+                radial-gradient(ellipse 85% 70% at 50% 50%, var(--color-3) 0%, transparent 100%);
+            filter: blur(50px);
+            opacity: 1;
+            animation: breathe 10s infinite alternate ease-in-out;
+            transition: background 1s ease;
+        }
+
+        @keyframes breathe {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.1); }
+        }
+
+        /* Grain / Noise texture overlay (canvas) */
+        #grainCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+            opacity: 0.18;
+            mix-blend-mode: overlay;
+            pointer-events: none;
+        }
+
+        /* Timer Display */
+        .timer-container {
+            position: relative;
+            z-index: 10;
+            text-align: center;
+            text-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+
+        .time-display {
+            font-family: 'Playfair Display', serif;
+            font-size: 15vw;
+            font-weight: 200;
+            letter-spacing: -0.02em;
+            line-height: 1;
+            margin: 0;
+        }
+
+        /* Control Panel */
+        .settings-btn {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            z-index: 20;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 24px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            transition: background 0.3s;
+        }
+
+        .settings-btn:hover { background: rgba(255, 255, 255, 0.3); }
+
+        .settings-panel {
+            position: absolute;
+            top: 90px;
+            right: 30px;
+            z-index: 20;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
+            padding: 25px;
+            width: 250px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            transform: translateY(-20px);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .settings-panel.active {
+            transform: translateY(0);
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .panel-section { margin-bottom: 20px; }
+        .panel-section h3 { margin: 0 0 10px 0; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; }
+
+        .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        .input-group input {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 8px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .btn-group { display: flex; gap: 8px; }
+        .btn-group button {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .btn-group button:hover { background: rgba(255, 255, 255, 0.3); }
+
+        /* Theme Pickers */
+        .theme-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+        .theme-btn {
+            width: 30px; height: 30px;
+            border-radius: 50%;
+            border: 2px solid white;
+            cursor: pointer;
+        }
+        .theme-sunset { background: linear-gradient(135deg, #ff2d78, #1a0830); }
+        .theme-peach { background: linear-gradient(135deg, #ff9a9e, #c8b6e2); }
+        .theme-amber { background: linear-gradient(135deg, #ff6b35, #f5d0a9); }
+        .theme-rose { background: linear-gradient(135deg, #c0545e, #e8b4b8); }
+        .theme-violet { background: linear-gradient(135deg, #ff47a5, #7b68ee); }
+
+        /* Select styling */
+        .panel-select {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+        }
+        .panel-select option {
+            background: #2a2a3e;
+            color: white;
+        }
+
+        /* Focus (zen) mode */
+        .focus-btn {
+            position: absolute;
+            top: 30px;
+            right: 90px;
+            z-index: 20;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            transition: background 0.3s, opacity 0.3s;
+        }
+        .focus-btn:hover { background: rgba(255, 255, 255, 0.3); }
+
+        body.focus-mode .settings-btn,
+        body.focus-mode .focus-btn {
+            opacity: 0;
+            pointer-events: none;
+        }
+        body.focus-mode .settings-panel {
+            opacity: 0 !important;
+            visibility: hidden !important;
+            pointer-events: none;
+        }
+        body.focus-mode .time-display {
+            font-size: 20vw;
+        }
+        body.focus-mode:hover .focus-btn {
+            opacity: 0.4;
+            pointer-events: auto;
+        }
+        body.focus-mode:hover .focus-btn:hover {
+            opacity: 1;
+        }
+
+        /* Date display */
+        .date-display {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.8vw;
+            font-weight: 300;
+            letter-spacing: 0.05em;
+            opacity: 0.7;
+            margin-bottom: 1.5vw;
+            display: none;
+        }
+        .date-display.visible { display: block; }
+
+        /* Progress bar */
+        .progress-container {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50%;
+            max-width: 500px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 4px;
+            z-index: 10;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-container.visible { display: block; }
+        .progress-bar {
+            height: 100%;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 4px;
+            transition: width 1s linear;
+        }
+
+        body.focus-mode .progress-container {
+            bottom: 50px;
+            width: 60%;
+        }
+
+        /* Toggle switch */
+        .toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .toggle-row span {
+            font-size: 13px;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 40px;
+            height: 22px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 11px;
+            cursor: pointer;
+            transition: background 0.3s;
+            flex-shrink: 0;
+        }
+        .toggle-switch.active {
+            background: rgba(255, 255, 255, 0.45);
+        }
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .toggle-switch.active::after {
+            transform: translateX(18px);
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="aura-bg"></div>
+    <canvas id="grainCanvas"></canvas>
+
+    <button class="focus-btn" id="focusBtn" title="Režim soustředění">🧘</button>
+    <button class="settings-btn" id="togglePanel">⚙️</button>
+
+    <div class="settings-panel" id="settingsPanel">
+        <div class="panel-section">
+            <h3>Časovač</h3>
+            <div class="input-group">
+                <input type="number" id="minInput" placeholder="Min" min="0" value="25">
+                <input type="number" id="secInput" placeholder="Sek" min="0" max="59" value="0">
+            </div>
+            <div class="btn-group">
+                <button id="startBtn">Start</button>
+                <button id="pauseBtn">Pauza</button>
+                <button id="resetBtn">Reset</button>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <h3>Font</h3>
+            <select class="panel-select" id="fontSelect">
+                <option value="Inter">Inter</option>
+                <option value="JetBrains Mono">JetBrains Mono</option>
+                <option value="Playfair Display" selected>Playfair Display</option>
+                <option value="Orbitron">Orbitron</option>
+                <option value="Space Grotesk">Space Grotesk</option>
+                <option value="Bebas Neue">Bebas Neue</option>
+                <option value="Raleway">Raleway</option>
+                <option value="Caveat">Caveat</option>
+                <option value="Quicksand">Quicksand</option>
+                <option value="Syncopate">Syncopate Bold</option>
+            </select>
+        </div>
+
+        <div class="panel-section">
+            <h3>Formát času</h3>
+            <select class="panel-select" id="formatSelect">
+                <option value="mm:ss">MM:SS</option>
+                <option value="m:ss">M:SS</option>
+                <option value="total">Jen sekundy</option>
+                <option value="hh:mm:ss">HH:MM:SS</option>
+            </select>
+        </div>
+
+        <div class="panel-section">
+            <h3>Zobrazení</h3>
+            <div class="toggle-row">
+                <span>Datum</span>
+                <div class="toggle-switch" id="toggleDate"></div>
+            </div>
+            <div class="toggle-row">
+                <span>Progress bar</span>
+                <div class="toggle-switch" id="toggleProgress"></div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <h3>Aura Barva</h3>
+            <div class="theme-buttons">
+                <div class="theme-btn theme-sunset" onclick="setTheme('#ff2d78', '#ff6b9d', '#7b2ff7', '#1a0830')"></div>
+                <div class="theme-btn theme-peach" onclick="setTheme('#ff9a9e', '#fecfef', '#e8b4c8', '#c8b6e2')"></div>
+                <div class="theme-btn theme-amber" onclick="setTheme('#ff6b35', '#ffa062', '#f0c27f', '#f5d0a9')"></div>
+                <div class="theme-btn theme-rose" onclick="setTheme('#c0545e', '#d4838a', '#c9929a', '#e8b4b8')"></div>
+                <div class="theme-btn theme-violet" onclick="setTheme('#ff47a5', '#e855d0', '#9b59e0', '#4a2080')"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="timer-container">
+        <div class="date-display" id="dateDisplay"></div>
+        <h1 class="time-display" id="display">25:00</h1>
+    </div>
+
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <script>
+        let timerInterval;
+        let timeLeft = 25 * 60; // Výchozí čas 25 minut
+        let isRunning = false;
+        let timeFormat = 'mm:ss';
+
+        let totalTime = 25 * 60; // Celkový čas session pro progress bar
+
+        const display = document.getElementById('display');
+        const minInput = document.getElementById('minInput');
+        const secInput = document.getElementById('secInput');
+        const fontSelect = document.getElementById('fontSelect');
+        const formatSelect = document.getElementById('formatSelect');
+        const dateDisplay = document.getElementById('dateDisplay');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const toggleDate = document.getElementById('toggleDate');
+        const toggleProgress = document.getElementById('toggleProgress');
+
+        // Formátování času
+        function formatTime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+
+            switch (timeFormat) {
+                case 'mm:ss':
+                    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                case 'm:ss':
+                    return `${m}:${s.toString().padStart(2, '0')}`;
+                case 'total':
+                    return `${seconds}`;
+                case 'hh:mm:ss':
+                    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                default:
+                    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            }
+        }
+
+        function updateDisplay() {
+            display.textContent = formatTime(timeLeft);
+        }
+
+        // Výběr fontu
+        fontSelect.addEventListener('change', () => {
+            const font = fontSelect.value + ', sans-serif';
+            const weight = fontSelect.value === 'Syncopate' ? '700' : '200';
+            display.style.fontFamily = font;
+            display.style.fontWeight = weight;
+            dateDisplay.style.fontFamily = font;
+        });
+
+        // Výběr formátu
+        formatSelect.addEventListener('change', () => {
+            timeFormat = formatSelect.value;
+            updateDisplay();
+        });
+
+        // Logika časovače
+        document.getElementById('startBtn').addEventListener('click', () => {
+            if (isRunning) return;
+
+            // Pokud spouštíme po resetu nebo první start, načti hodnoty z inputů
+            if (timeLeft === parseInt(minInput.value || 0) * 60 + parseInt(secInput.value || 0) || timeLeft === 0) {
+                 const m = parseInt(minInput.value) || 0;
+                 const s = parseInt(secInput.value) || 0;
+                 timeLeft = (m * 60) + s;
+                 totalTime = timeLeft;
+            }
+
+            if(timeLeft <= 0) return;
+
+            isRunning = true;
+            updateProgress();
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateDisplay();
+                updateProgress();
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    isRunning = false;
+                    alert("Čas vypršel!");
+                }
+            }, 1000);
+        });
+
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            clearInterval(timerInterval);
+            isRunning = false;
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            clearInterval(timerInterval);
+            isRunning = false;
+            const m = parseInt(minInput.value) || 0;
+            const s = parseInt(secInput.value) || 0;
+            timeLeft = (m * 60) + s;
+            totalTime = timeLeft;
+            updateDisplay();
+            updateProgress();
+        });
+
+        // Při ruční změně v inputech se čas rovnou zaktualizuje na displeji (pokud neběží)
+        [minInput, secInput].forEach(input => {
+            input.addEventListener('change', () => {
+                if(!isRunning) {
+                    const m = parseInt(minInput.value) || 0;
+                    const s = parseInt(secInput.value) || 0;
+                    timeLeft = (m * 60) + s;
+                    totalTime = timeLeft;
+                    updateDisplay();
+                    updateProgress();
+                }
+            });
+        });
+
+        // Přepínání menu
+        const panel = document.getElementById('settingsPanel');
+        document.getElementById('togglePanel').addEventListener('click', () => {
+            panel.classList.toggle('active');
+        });
+
+        // Témata (Aura)
+        function setTheme(c1, c2, c3, bg) {
+            document.documentElement.style.setProperty('--color-1', c1);
+            document.documentElement.style.setProperty('--color-2', c2);
+            document.documentElement.style.setProperty('--color-3', c3);
+            document.documentElement.style.setProperty('--color-bg', bg);
+        }
+
+        // Režim soustředění (focus/zen mode) + Fullscreen API
+        document.getElementById('focusBtn').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().then(() => {
+                    document.body.classList.add('focus-mode');
+                }).catch(() => {
+                    // Fallback pokud fullscreen selže
+                    document.body.classList.add('focus-mode');
+                });
+            } else {
+                document.exitFullscreen();
+            }
+            panel.classList.remove('active');
+        });
+
+        // Při opuštění fullscreenu (Esc) automaticky vypni focus mode
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                document.body.classList.remove('focus-mode');
+                generateGrain();
+            }
+        });
+
+        // Grain texture via canvas
+        const grainCanvas = document.getElementById('grainCanvas');
+        const grainCtx = grainCanvas.getContext('2d');
+
+        function generateGrain() {
+            const w = grainCanvas.width = window.innerWidth;
+            const h = grainCanvas.height = window.innerHeight;
+            const imageData = grainCtx.createImageData(w, h);
+            const data = imageData.data;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const v = Math.random() * 255;
+                data[i] = v;       // R
+                data[i + 1] = v;   // G
+                data[i + 2] = v;   // B
+                data[i + 3] = 255; // A
+            }
+
+            grainCtx.putImageData(imageData, 0, 0);
+        }
+
+        generateGrain();
+        window.addEventListener('resize', generateGrain);
+
+        // Datum
+        function updateDate() {
+            const now = new Date();
+            const options = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+            dateDisplay.textContent = now.toLocaleDateString('cs-CZ', options);
+        }
+        updateDate();
+        setInterval(updateDate, 60000);
+
+        // Toggle datum
+        toggleDate.addEventListener('click', () => {
+            toggleDate.classList.toggle('active');
+            dateDisplay.classList.toggle('visible');
+        });
+
+        // Toggle progress bar
+        toggleProgress.addEventListener('click', () => {
+            toggleProgress.classList.toggle('active');
+            progressContainer.classList.toggle('visible');
+        });
+
+        // Progress bar update
+        function updateProgress() {
+            if (totalTime > 0) {
+                const pct = (timeLeft / totalTime) * 100;
+                progressBar.style.width = Math.max(0, pct) + '%';
+            }
+        }
+
+        // Init
+        updateDisplay();
+    </script>
+</body>
+</html>
