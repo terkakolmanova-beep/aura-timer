@@ -305,6 +305,86 @@
             transform: translateX(18px);
         }
 
+        /* Pause indicator */
+        .pause-indicator {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 15;
+            font-size: 1.2vw;
+            font-weight: 400;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.4s ease;
+        }
+        .pause-indicator.visible {
+            opacity: 0.5;
+            animation: pausePulse 2s infinite ease-in-out;
+        }
+        @keyframes pausePulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.6; }
+        }
+
+        /* Done overlay */
+        .done-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 100;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            background: transparent;
+        }
+        .done-overlay.active {
+            display: flex;
+        }
+        .done-text {
+            font-family: 'Playfair Display', serif;
+            font-size: 8vw;
+            font-weight: 300;
+            letter-spacing: 0.05em;
+            opacity: 0;
+            transform: scale(0.8);
+            animation: doneAppear 1s 0.3s ease forwards;
+        }
+        .done-sub {
+            font-size: 1.5vw;
+            font-weight: 300;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            opacity: 0;
+            animation: doneAppear 1s 0.8s ease forwards;
+        }
+        @keyframes doneAppear {
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        /* Sparkle particles */
+        .sparkle {
+            position: fixed;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 99;
+            animation: sparkleFloat linear forwards;
+        }
+        @keyframes sparkleFloat {
+            0% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+            100% {
+                opacity: 0;
+                transform: translateY(-200px) scale(0);
+            }
+        }
+
     </style>
 </head>
 <body>
@@ -384,17 +464,25 @@
         <h1 class="time-display" id="display">25:00</h1>
     </div>
 
+    <div class="pause-indicator" id="pauseIndicator">mezerník — pokračovat</div>
+
     <div class="progress-container" id="progressContainer">
         <div class="progress-bar" id="progressBar"></div>
     </div>
 
+    <div class="done-overlay" id="doneOverlay">
+        <div class="done-text">You're done ✨</div>
+        <div class="done-sub">skvělá práce</div>
+    </div>
+
     <script>
         let timerInterval;
-        let timeLeft = 25 * 60; // Výchozí čas 25 minut
+        let timeLeft = 25 * 60;
         let isRunning = false;
+        let isPaused = false;
         let timeFormat = 'mm:ss';
-
-        let totalTime = 25 * 60; // Celkový čas session pro progress bar
+        let totalTime = 25 * 60;
+        let wakeLock = null;
 
         const display = document.getElementById('display');
         const minInput = document.getElementById('minInput');
@@ -406,13 +494,36 @@
         const progressBar = document.getElementById('progressBar');
         const toggleDate = document.getElementById('toggleDate');
         const toggleProgress = document.getElementById('toggleProgress');
+        const pauseIndicator = document.getElementById('pauseIndicator');
+        const doneOverlay = document.getElementById('doneOverlay');
 
-        // Formátování času
+        // === Wake Lock (zabránění zamykání obrazovky) ===
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                }
+            } catch (e) { /* Wake Lock API not available or denied */ }
+        }
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release();
+                wakeLock = null;
+            }
+        }
+        // Re-acquire wake lock when tab becomes visible again
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && isRunning) {
+                requestWakeLock();
+            }
+        });
+
+        // === Formátování času ===
         function formatTime(seconds) {
             const h = Math.floor(seconds / 3600);
             const m = Math.floor((seconds % 3600) / 60);
             const s = seconds % 60;
-
             switch (timeFormat) {
                 case 'mm:ss':
                     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
@@ -431,7 +542,7 @@
             display.textContent = formatTime(timeLeft);
         }
 
-        // Výběr fontu
+        // === Font ===
         fontSelect.addEventListener('change', () => {
             const font = fontSelect.value + ', sans-serif';
             const weight = fontSelect.value === 'Syncopate' ? '700' : '200';
@@ -440,28 +551,33 @@
             dateDisplay.style.fontFamily = font;
         });
 
-        // Výběr formátu
+        // === Formát ===
         formatSelect.addEventListener('change', () => {
             timeFormat = formatSelect.value;
             updateDisplay();
         });
 
-        // Logika časovače
-        document.getElementById('startBtn').addEventListener('click', () => {
+        // === Start ===
+        function startTimer() {
             if (isRunning) return;
 
-            // Pokud spouštíme po resetu nebo první start, načti hodnoty z inputů
-            if (timeLeft === parseInt(minInput.value || 0) * 60 + parseInt(secInput.value || 0) || timeLeft === 0) {
-                 const m = parseInt(minInput.value) || 0;
-                 const s = parseInt(secInput.value) || 0;
-                 timeLeft = (m * 60) + s;
-                 totalTime = timeLeft;
-            }
+            // Zavři done overlay pokud byl otevřený
+            doneOverlay.classList.remove('active');
 
-            if(timeLeft <= 0) return;
+            if (timeLeft === parseInt(minInput.value || 0) * 60 + parseInt(secInput.value || 0) || timeLeft === 0) {
+                const m = parseInt(minInput.value) || 0;
+                const s = parseInt(secInput.value) || 0;
+                timeLeft = (m * 60) + s;
+                totalTime = timeLeft;
+            }
+            if (timeLeft <= 0) return;
 
             isRunning = true;
+            isPaused = false;
+            pauseIndicator.classList.remove('visible');
+            requestWakeLock();
             updateProgress();
+
             timerInterval = setInterval(() => {
                 timeLeft--;
                 updateDisplay();
@@ -469,31 +585,150 @@
                 if (timeLeft <= 0) {
                     clearInterval(timerInterval);
                     isRunning = false;
-                    alert("Čas vypršel!");
+                    isPaused = false;
+                    releaseWakeLock();
+                    showDoneEffect();
                 }
             }, 1000);
-        });
+        }
 
-        document.getElementById('pauseBtn').addEventListener('click', () => {
+        // === Pauza ===
+        function pauseTimer() {
+            if (!isRunning) return;
             clearInterval(timerInterval);
             isRunning = false;
-        });
+            isPaused = true;
+            pauseIndicator.classList.add('visible');
+            releaseWakeLock();
+        }
 
-        document.getElementById('resetBtn').addEventListener('click', () => {
+        // === Resume ===
+        function resumeTimer() {
+            if (isRunning || timeLeft <= 0) return;
+            isRunning = true;
+            isPaused = false;
+            pauseIndicator.classList.remove('visible');
+            requestWakeLock();
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateDisplay();
+                updateProgress();
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    isRunning = false;
+                    isPaused = false;
+                    releaseWakeLock();
+                    showDoneEffect();
+                }
+            }, 1000);
+        }
+
+        // === Toggle (start/pause/resume) ===
+        function toggleTimer() {
+            if (isRunning) {
+                pauseTimer();
+            } else if (isPaused) {
+                resumeTimer();
+            } else {
+                startTimer();
+            }
+        }
+
+        // === Reset ===
+        function resetTimer() {
             clearInterval(timerInterval);
             isRunning = false;
+            isPaused = false;
+            pauseIndicator.classList.remove('visible');
+            doneOverlay.classList.remove('active');
+            releaseWakeLock();
             const m = parseInt(minInput.value) || 0;
             const s = parseInt(secInput.value) || 0;
             timeLeft = (m * 60) + s;
             totalTime = timeLeft;
             updateDisplay();
             updateProgress();
+            // Vyčisti sparkles
+            document.querySelectorAll('.sparkle').forEach(s => s.remove());
+        }
+
+        document.getElementById('startBtn').addEventListener('click', startTimer);
+        document.getElementById('pauseBtn').addEventListener('click', pauseTimer);
+        document.getElementById('resetBtn').addEventListener('click', resetTimer);
+
+        // === Mezerník pro pauza/resume ===
+        document.addEventListener('keydown', (e) => {
+            // Ignoruj pokud focus je v inputu nebo selectu
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+
+            if (e.code === 'Space') {
+                e.preventDefault();
+                toggleTimer();
+            }
         });
 
-        // Při ruční změně v inputech se čas rovnou zaktualizuje na displeji (pokud neběží)
+        // === Klik na timer pro pauza/resume ===
+        document.querySelector('.timer-container').addEventListener('click', (e) => {
+            toggleTimer();
+        });
+
+        // === Done efekt se sparkles ===
+        function showDoneEffect() {
+            doneOverlay.classList.add('active');
+
+            // Aplikuj aktuální font na done text
+            const currentFont = display.style.fontFamily || "'Playfair Display', serif";
+            doneOverlay.querySelector('.done-text').style.fontFamily = currentFont;
+
+            // Sparkles (jiskry/hvězdičky)
+            const colors = ['#FFD700', '#FF6B9D', '#7B2FF7', '#FF2D78', '#FFFFFF', '#FFA062', '#43E97B'];
+            let sparkleCount = 0;
+            const maxSparkles = 80;
+
+            function createSparkle() {
+                if (sparkleCount >= maxSparkles) return;
+                sparkleCount++;
+
+                const sparkle = document.createElement('div');
+                sparkle.className = 'sparkle';
+                const x = Math.random() * window.innerWidth;
+                const y = window.innerHeight * 0.3 + Math.random() * window.innerHeight * 0.5;
+                const size = 3 + Math.random() * 8;
+                const duration = 1.5 + Math.random() * 2;
+                const color = colors[Math.floor(Math.random() * colors.length)];
+
+                sparkle.style.cssText = `
+                    left: ${x}px;
+                    top: ${y}px;
+                    width: ${size}px;
+                    height: ${size}px;
+                    background: ${color};
+                    box-shadow: 0 0 ${size * 2}px ${color};
+                    animation-duration: ${duration}s;
+                `;
+                document.body.appendChild(sparkle);
+
+                setTimeout(() => sparkle.remove(), duration * 1000);
+            }
+
+            // Postupně vytvářej sparkles
+            const sparkleInterval = setInterval(() => {
+                for (let i = 0; i < 5; i++) createSparkle();
+            }, 100);
+
+            setTimeout(() => clearInterval(sparkleInterval), 3000);
+        }
+
+        // Klik na done overlay ho zavře
+        doneOverlay.addEventListener('click', () => {
+            doneOverlay.classList.remove('active');
+        });
+
+        // Při ruční změně v inputech
         [minInput, secInput].forEach(input => {
             input.addEventListener('change', () => {
-                if(!isRunning) {
+                if (!isRunning) {
                     const m = parseInt(minInput.value) || 0;
                     const s = parseInt(secInput.value) || 0;
                     timeLeft = (m * 60) + s;
@@ -504,13 +739,13 @@
             });
         });
 
-        // Přepínání menu
+        // === Panel ===
         const panel = document.getElementById('settingsPanel');
         document.getElementById('togglePanel').addEventListener('click', () => {
             panel.classList.toggle('active');
         });
 
-        // Témata (Aura)
+        // === Témata (Aura) ===
         function setTheme(c1, c2, c3, bg) {
             document.documentElement.style.setProperty('--color-1', c1);
             document.documentElement.style.setProperty('--color-2', c2);
@@ -518,13 +753,12 @@
             document.documentElement.style.setProperty('--color-bg', bg);
         }
 
-        // Režim soustředění (focus/zen mode) + Fullscreen API
+        // === Fullscreen focus mode ===
         document.getElementById('focusBtn').addEventListener('click', () => {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().then(() => {
                     document.body.classList.add('focus-mode');
                 }).catch(() => {
-                    // Fallback pokud fullscreen selže
                     document.body.classList.add('focus-mode');
                 });
             } else {
@@ -533,7 +767,6 @@
             panel.classList.remove('active');
         });
 
-        // Při opuštění fullscreenu (Esc) automaticky vypni focus mode
         document.addEventListener('fullscreenchange', () => {
             if (!document.fullscreenElement) {
                 document.body.classList.remove('focus-mode');
@@ -541,7 +774,7 @@
             }
         });
 
-        // Grain texture via canvas
+        // === Grain texture ===
         const grainCanvas = document.getElementById('grainCanvas');
         const grainCtx = grainCanvas.getContext('2d');
 
@@ -550,22 +783,19 @@
             const h = grainCanvas.height = window.innerHeight;
             const imageData = grainCtx.createImageData(w, h);
             const data = imageData.data;
-
             for (let i = 0; i < data.length; i += 4) {
                 const v = Math.random() * 255;
-                data[i] = v;       // R
-                data[i + 1] = v;   // G
-                data[i + 2] = v;   // B
-                data[i + 3] = 255; // A
+                data[i] = v;
+                data[i + 1] = v;
+                data[i + 2] = v;
+                data[i + 3] = 255;
             }
-
             grainCtx.putImageData(imageData, 0, 0);
         }
-
         generateGrain();
         window.addEventListener('resize', generateGrain);
 
-        // Datum
+        // === Datum ===
         function updateDate() {
             const now = new Date();
             const options = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
