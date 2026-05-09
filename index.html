@@ -318,15 +318,10 @@
             text-transform: uppercase;
             opacity: 0;
             pointer-events: none;
-            transition: opacity 0.4s ease;
+            transition: opacity 0.5s ease;
         }
         .pause-indicator.visible {
-            opacity: 0.5;
-            animation: pausePulse 2s infinite ease-in-out;
-        }
-        @keyframes pausePulse {
-            0%, 100% { opacity: 0.3; }
-            50% { opacity: 0.6; }
+            opacity: 0.45;
         }
 
         /* Done overlay */
@@ -338,7 +333,9 @@
             justify-content: center;
             align-items: center;
             flex-direction: column;
-            background: transparent;
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
         }
         .done-overlay.active {
             display: flex;
@@ -464,7 +461,7 @@
         <h1 class="time-display" id="display">25:00</h1>
     </div>
 
-    <div class="pause-indicator" id="pauseIndicator">mezerník — pokračovat</div>
+    <div class="pause-indicator" id="pauseIndicator">PAUSED · press Space to continue</div>
 
     <div class="progress-container" id="progressContainer">
         <div class="progress-bar" id="progressBar"></div>
