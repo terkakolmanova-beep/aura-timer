@@ -111,12 +111,16 @@
             border-radius: 20px;
             padding: 25px;
             width: 250px;
+            max-height: calc(100vh - 130px);
+            overflow-y: auto;
             box-shadow: 0 8px 32px rgba(0,0,0,0.1);
             transform: translateY(-20px);
             opacity: 0;
             visibility: hidden;
             transition: all 0.3s ease;
         }
+        .settings-panel::-webkit-scrollbar { width: 4px; }
+        .settings-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
 
         .settings-panel.active {
             transform: translateY(0);
@@ -305,6 +309,56 @@
             transform: translateX(18px);
         }
 
+        /* Sound picker */
+        .sound-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+            margin-bottom: 10px;
+        }
+        .sound-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: white;
+            padding: 8px 4px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 11px;
+            text-align: center;
+            transition: all 0.2s;
+            line-height: 1.3;
+        }
+        .sound-btn:hover { background: rgba(255, 255, 255, 0.2); }
+        .sound-btn.active {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+        .sound-btn .sound-icon { font-size: 18px; display: block; margin-bottom: 3px; }
+
+        .volume-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .volume-row span { font-size: 12px; opacity: 0.6; }
+        .volume-slider {
+            flex: 1;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            outline: none;
+        }
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: white;
+            cursor: pointer;
+        }
+
         /* Pause indicator */
         .pause-indicator {
             position: absolute;
@@ -441,6 +495,23 @@
             <div class="toggle-row">
                 <span>Progress bar</span>
                 <div class="toggle-switch" id="toggleProgress"></div>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <h3>Ambient zvuk</h3>
+            <div class="sound-grid">
+                <div class="sound-btn" data-sound="rain"><span class="sound-icon">🌧</span>Déšť</div>
+                <div class="sound-btn" data-sound="fire"><span class="sound-icon">🔥</span>Oheň</div>
+                <div class="sound-btn" data-sound="stream"><span class="sound-icon">🏞</span>Potok</div>
+                <div class="sound-btn" data-sound="wind"><span class="sound-icon">🍃</span>Vítr</div>
+                <div class="sound-btn" data-sound="ocean"><span class="sound-icon">🌊</span>Oceán</div>
+                <div class="sound-btn" data-sound="airplane"><span class="sound-icon">✈️</span>Letadlo</div>
+            </div>
+            <div class="volume-row">
+                <span>🔈</span>
+                <input type="range" class="volume-slider" id="volumeSlider" min="0" max="100" value="50">
+                <span>🔊</span>
             </div>
         </div>
 
@@ -820,6 +891,266 @@
                 progressBar.style.width = Math.max(0, pct) + '%';
             }
         }
+
+        // === Ambient zvuky (Web Audio API) ===
+        let audioCtx = null;
+        let activeSound = null;
+        let activeSoundName = null;
+        let soundNodes = []; // all nodes to disconnect on stop
+
+        function getAudioCtx() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            return audioCtx;
+        }
+
+        // Create white noise buffer
+        function createNoiseBuffer(ctx, duration) {
+            const sr = ctx.sampleRate;
+            const len = sr * duration;
+            const buf = ctx.createBuffer(2, len, sr);
+            for (let ch = 0; ch < 2; ch++) {
+                const d = buf.getChannelData(ch);
+                for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+            }
+            return buf;
+        }
+
+        // Create brown noise buffer
+        function createBrownNoiseBuffer(ctx, duration) {
+            const sr = ctx.sampleRate;
+            const len = sr * duration;
+            const buf = ctx.createBuffer(2, len, sr);
+            for (let ch = 0; ch < 2; ch++) {
+                const d = buf.getChannelData(ch);
+                let last = 0;
+                for (let i = 0; i < len; i++) {
+                    const white = Math.random() * 2 - 1;
+                    last = (last + 0.02 * white) / 1.02;
+                    d[i] = last * 3.5;
+                }
+            }
+            return buf;
+        }
+
+        function stopSound() {
+            soundNodes.forEach(n => { try { n.stop ? n.stop() : n.disconnect(); } catch(e){} });
+            soundNodes = [];
+            activeSoundName = null;
+            document.querySelectorAll('.sound-btn').forEach(b => b.classList.remove('active'));
+        }
+
+        function playSound(name) {
+            const ctx = getAudioCtx();
+            stopSound();
+            activeSoundName = name;
+
+            const masterGain = ctx.createGain();
+            masterGain.gain.value = (document.getElementById('volumeSlider').value / 100) * 0.7;
+            masterGain.connect(ctx.destination);
+            soundNodes.push(masterGain);
+
+            switch(name) {
+                case 'rain': {
+                    // Rain: filtered white noise + drip layer
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = createNoiseBuffer(ctx, 8);
+                    noise.loop = true;
+                    const bp = ctx.createBiquadFilter();
+                    bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.4;
+                    const hp = ctx.createBiquadFilter();
+                    hp.type = 'highpass'; hp.frequency.value = 400;
+                    noise.connect(bp).connect(hp).connect(masterGain);
+                    noise.start();
+                    soundNodes.push(noise);
+
+                    // Subtle low rumble
+                    const rumble = ctx.createBufferSource();
+                    rumble.buffer = createBrownNoiseBuffer(ctx, 8);
+                    rumble.loop = true;
+                    const rlp = ctx.createBiquadFilter();
+                    rlp.type = 'lowpass'; rlp.frequency.value = 200;
+                    const rg = ctx.createGain(); rg.gain.value = 0.3;
+                    rumble.connect(rlp).connect(rg).connect(masterGain);
+                    rumble.start();
+                    soundNodes.push(rumble);
+                    break;
+                }
+                case 'fire': {
+                    // Fire: brown noise with crackle texture
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = createBrownNoiseBuffer(ctx, 8);
+                    noise.loop = true;
+                    const lp = ctx.createBiquadFilter();
+                    lp.type = 'lowpass'; lp.frequency.value = 600;
+                    const g1 = ctx.createGain(); g1.gain.value = 0.8;
+                    noise.connect(lp).connect(g1).connect(masterGain);
+                    noise.start();
+                    soundNodes.push(noise);
+
+                    // Crackle layer
+                    const crackle = ctx.createBufferSource();
+                    const sr = ctx.sampleRate;
+                    const cBuf = ctx.createBuffer(1, sr * 8, sr);
+                    const cd = cBuf.getChannelData(0);
+                    for (let i = 0; i < cd.length; i++) {
+                        cd[i] = Math.random() < 0.003 ? (Math.random() * 2 - 1) * 0.8 : 0;
+                    }
+                    crackle.buffer = cBuf; crackle.loop = true;
+                    const cbp = ctx.createBiquadFilter();
+                    cbp.type = 'bandpass'; cbp.frequency.value = 3000; cbp.Q.value = 1;
+                    const cg = ctx.createGain(); cg.gain.value = 0.5;
+                    crackle.connect(cbp).connect(cg).connect(masterGain);
+                    crackle.start();
+                    soundNodes.push(crackle);
+                    break;
+                }
+                case 'stream': {
+                    // Stream: mid-freq filtered noise with modulation
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = createNoiseBuffer(ctx, 8);
+                    noise.loop = true;
+                    const bp = ctx.createBiquadFilter();
+                    bp.type = 'bandpass'; bp.frequency.value = 2500; bp.Q.value = 0.6;
+                    const g = ctx.createGain(); g.gain.value = 0.5;
+
+                    // LFO for subtle water movement
+                    const lfo = ctx.createOscillator();
+                    lfo.frequency.value = 0.3;
+                    const lfoGain = ctx.createGain();
+                    lfoGain.gain.value = 300;
+                    lfo.connect(lfoGain).connect(bp.frequency);
+                    lfo.start();
+                    soundNodes.push(lfo);
+
+                    noise.connect(bp).connect(g).connect(masterGain);
+                    noise.start();
+                    soundNodes.push(noise);
+
+                    // Low water body
+                    const body = ctx.createBufferSource();
+                    body.buffer = createBrownNoiseBuffer(ctx, 8);
+                    body.loop = true;
+                    const blp = ctx.createBiquadFilter();
+                    blp.type = 'lowpass'; blp.frequency.value = 350;
+                    const bg = ctx.createGain(); bg.gain.value = 0.25;
+                    body.connect(blp).connect(bg).connect(masterGain);
+                    body.start();
+                    soundNodes.push(body);
+                    break;
+                }
+                case 'wind': {
+                    // Wind: slowly modulated low-pass noise
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = createNoiseBuffer(ctx, 10);
+                    noise.loop = true;
+                    const lp = ctx.createBiquadFilter();
+                    lp.type = 'lowpass'; lp.frequency.value = 500; lp.Q.value = 1;
+
+                    const lfo = ctx.createOscillator();
+                    lfo.frequency.value = 0.1;
+                    const lfoG = ctx.createGain();
+                    lfoG.gain.value = 400;
+                    lfo.connect(lfoG).connect(lp.frequency);
+                    lfo.start();
+                    soundNodes.push(lfo);
+
+                    const g = ctx.createGain(); g.gain.value = 0.6;
+                    noise.connect(lp).connect(g).connect(masterGain);
+                    noise.start();
+                    soundNodes.push(noise);
+                    break;
+                }
+                case 'ocean': {
+                    // Ocean: rhythmic noise surges
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = createBrownNoiseBuffer(ctx, 10);
+                    noise.loop = true;
+                    const lp = ctx.createBiquadFilter();
+                    lp.type = 'lowpass'; lp.frequency.value = 700;
+                    const g = ctx.createGain();
+
+                    // Slow wave LFO on volume
+                    const lfo = ctx.createOscillator();
+                    lfo.frequency.value = 0.08; // ~8s wave cycle
+                    const lfoG = ctx.createGain();
+                    lfoG.gain.value = 0.35;
+                    lfo.connect(lfoG).connect(g.gain);
+                    g.gain.value = 0.45;
+                    lfo.start();
+                    soundNodes.push(lfo);
+
+                    noise.connect(lp).connect(g).connect(masterGain);
+                    noise.start();
+                    soundNodes.push(noise);
+
+                    // High foam layer
+                    const foam = ctx.createBufferSource();
+                    foam.buffer = createNoiseBuffer(ctx, 10);
+                    foam.loop = true;
+                    const fbp = ctx.createBiquadFilter();
+                    fbp.type = 'bandpass'; fbp.frequency.value = 4000; fbp.Q.value = 0.5;
+                    const fg = ctx.createGain(); fg.gain.value = 0.1;
+                    const flfo = ctx.createOscillator();
+                    flfo.frequency.value = 0.08;
+                    const flfoG = ctx.createGain(); flfoG.gain.value = 0.08;
+                    flfo.connect(flfoG).connect(fg.gain);
+                    flfo.start();
+                    soundNodes.push(flfo);
+                    foam.connect(fbp).connect(fg).connect(masterGain);
+                    foam.start();
+                    soundNodes.push(foam);
+                    break;
+                }
+                case 'airplane': {
+                    // Airplane cabin: deep low drone
+                    const noise = ctx.createBufferSource();
+                    noise.buffer = createBrownNoiseBuffer(ctx, 8);
+                    noise.loop = true;
+                    const lp = ctx.createBiquadFilter();
+                    lp.type = 'lowpass'; lp.frequency.value = 250;
+                    const g = ctx.createGain(); g.gain.value = 0.9;
+                    noise.connect(lp).connect(g).connect(masterGain);
+                    noise.start();
+                    soundNodes.push(noise);
+
+                    // Mid hum
+                    const hum = ctx.createBufferSource();
+                    hum.buffer = createNoiseBuffer(ctx, 8);
+                    hum.loop = true;
+                    const hbp = ctx.createBiquadFilter();
+                    hbp.type = 'bandpass'; hbp.frequency.value = 180; hbp.Q.value = 2;
+                    const hg = ctx.createGain(); hg.gain.value = 0.3;
+                    hum.connect(hbp).connect(hg).connect(masterGain);
+                    hum.start();
+                    soundNodes.push(hum);
+                    break;
+                }
+            }
+        }
+
+        // Sound buttons
+        document.querySelectorAll('.sound-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const name = btn.dataset.sound;
+                if (activeSoundName === name) {
+                    stopSound();
+                } else {
+                    stopSound();
+                    btn.classList.add('active');
+                    playSound(name);
+                }
+            });
+        });
+
+        // Volume slider
+        document.getElementById('volumeSlider').addEventListener('input', (e) => {
+            if (audioCtx && soundNodes.length > 0) {
+                // First node is masterGain
+                const master = soundNodes[0];
+                if (master.gain) master.gain.value = (e.target.value / 100) * 0.7;
+            }
+        });
 
         // Init
         updateDisplay();
